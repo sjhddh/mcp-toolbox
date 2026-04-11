@@ -18,8 +18,10 @@ package alloydbpg
 // in the future, rather than just testing the prebuilt tools.
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"regexp"
@@ -126,7 +128,6 @@ func TestAlloyDBPgListTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("command initialization returned an error: %v", err)
 	}
-	defer cleanup()
 
 	waitCtx, cancelWait := context.WithTimeout(ctx, 10*time.Second)
 	defer cancelWait()
@@ -135,6 +136,19 @@ func TestAlloyDBPgListTools(t *testing.T) {
 		t.Logf("toolbox command logs: \n%s", out)
 		t.Fatalf("toolbox didn't start successfully: %v", err)
 	}
+
+	// Drain the pipe in the background to prevent deadlock
+	var logBuf bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		io.Copy(&logBuf, cmd.Out)
+		close(done)
+	}()
+	defer func() {
+		cleanup() // Stop the server first!
+		<-done    // Wait for logs to flush!
+		t.Logf("server logs:\n%s", logBuf.String())
+	}()
 
 	// We expect standard Postgres tools to be listed
 	// This is a subset check, full list validation can be added if needed
@@ -157,7 +171,11 @@ func TestAlloyDBPgCallTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to create AlloyDB connection pool: %s", err)
 	}
-	defer pool.Close()
+	defer func() {
+		t.Log("DEBUG: Starting pool.Close()...")
+		pool.Close()
+		t.Log("DEBUG: pool.Close() finished.")
+	}()
 
 	uniqueID := strings.ReplaceAll(uuid.New().String(), "-", "")
 
@@ -167,7 +185,6 @@ func TestAlloyDBPgCallTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("command initialization returned an error: %v", err)
 	}
-	defer cleanup()
 
 	waitCtx, cancelWait := context.WithTimeout(ctx, 10*time.Second)
 	defer cancelWait()
@@ -176,6 +193,21 @@ func TestAlloyDBPgCallTool(t *testing.T) {
 		t.Logf("toolbox command logs: \n%s", out)
 		t.Fatalf("toolbox didn't start successfully: %v", err)
 	}
+
+	// Drain the pipe in the background to prevent deadlock
+	var logBuf bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		io.Copy(&logBuf, cmd.Out)
+		close(done)
+	}()
+	defer func() {
+		t.Log("DEBUG: Starting cleanup()...")
+		cleanup()
+		t.Log("DEBUG: cleanup() finished.")
+		<-done
+		t.Logf("server logs:\n%s", logBuf.String())
+	}()
 
 	// Run shared Postgres tests
 	tests.RunMCPPostgresListViewsTest(t, ctx, pool)
@@ -209,5 +241,7 @@ func TestAlloyDBPgCallTool(t *testing.T) {
 		"list_invalid_indexes":           `{}`,
 		"get_query_plan":                 `{"query": "SELECT 1"}`,
 	}
+	t.Log("DEBUG: Starting RunMCPStatementToolsTest...")
 	tests.RunMCPStatementToolsTest(t, ctx, toolsToTest)
+	t.Log("DEBUG: Finished RunMCPStatementToolsTest.")
 }
