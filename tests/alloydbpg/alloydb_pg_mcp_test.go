@@ -145,8 +145,9 @@ func TestAlloyDBPgListTools(t *testing.T) {
 		close(done)
 	}()
 	defer func() {
-		cleanup() // Stop the server first!
-		<-done    // Wait for logs to flush!
+		cmd.Close() // Stop the server and close pipes!
+		cleanup()   // Delete temp file!
+		<-done      // Wait for logs to flush!
 		t.Logf("server logs:\n%s", logBuf.String())
 	}()
 
@@ -205,6 +206,7 @@ func TestAlloyDBPgCallTool(t *testing.T) {
 	}()
 	defer func() {
 		t.Log("DEBUG: Starting cleanup()...")
+		cmd.Close() // Stop the server and close pipes!
 		cleanup()
 		t.Log("DEBUG: cleanup() finished.")
 		<-done
