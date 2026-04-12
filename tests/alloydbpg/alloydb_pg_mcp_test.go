@@ -176,8 +176,17 @@ func TestAlloyDBPgCallTool(t *testing.T) {
 	}
 	defer func() {
 		t.Log("DEBUG: Starting pool.Close()...")
-		pool.Close()
-		t.Log("DEBUG: pool.Close() finished.")
+		done := make(chan struct{})
+		go func() {
+			pool.Close()
+			close(done)
+		}()
+		select {
+		case <-done:
+			t.Log("DEBUG: pool.Close() finished.")
+		case <-time.After(5 * time.Second):
+			t.Log("WARNING: pool.Close() timed out after 5 seconds!")
+		}
 	}()
 
 	uniqueID := strings.ReplaceAll(uuid.New().String(), "-", "")
